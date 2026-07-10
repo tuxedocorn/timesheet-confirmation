@@ -51,6 +51,7 @@ COL_EMPLOYEE_NAME = "Name"
 COL_EMPLOYEE_EMAIL = "Email"
 COL_DATE = "Date"
 COL_JOB = "Customer Job"
+COL_PAYROLL_ITEM = "Payroll Item"
 COL_HOURS = "Hours"
 COL_NOTES = "Notes"
 
@@ -73,7 +74,7 @@ TEST_MODE = os.environ.get("TEST_MODE", "true").strip().lower() == "true"
 TEST_EMAIL = "erik@tuxedofarmco.com"  # TODO: replace with your own address
 
 FROM_NAME = "Tuxedo Farm Co."
-REPLY_DEADLINE_TEXT = "by tomorrow"  # shown in the email body
+REPLY_DEADLINE_TEXT = "antes de mañana"  # shown in the email body
 
 # ---------------------------------------------------------------------------
 # SCRIPT LOGIC - shouldn't need to touch below this line
@@ -163,6 +164,7 @@ def build_email_html(name, entries):
     for entry in entries_sorted:
         entry_date = entry.get(COL_DATE, "") or ""
         job = entry.get(COL_JOB, "") or ""
+        payroll_item = entry.get(COL_PAYROLL_ITEM, "") or ""
         notes = entry.get(COL_NOTES, "") or ""
         raw_hours = entry.get(COL_HOURS, 0)
         try:
@@ -175,6 +177,7 @@ def build_email_html(name, entries):
         <tr>
             <td style="padding:6px 12px;border:1px solid #ddd;">{entry_date}</td>
             <td style="padding:6px 12px;border:1px solid #ddd;">{job}</td>
+            <td style="padding:6px 12px;border:1px solid #ddd;">{payroll_item}</td>
             <td style="padding:6px 12px;border:1px solid #ddd;text-align:right;">{hours:.2f}</td>
             <td style="padding:6px 12px;border:1px solid #ddd;">{notes}</td>
         </tr>"""
@@ -182,25 +185,26 @@ def build_email_html(name, entries):
     html = f"""
     <html>
     <body style="font-family:Arial,sans-serif;font-size:14px;color:#222;">
-        <p>Hi {name},</p>
-        <p>Here are your hours for the week. If anything looks wrong, please reply
-           to this email {REPLY_DEADLINE_TEXT} — otherwise we'll treat this as
-           confirmed and move ahead with payroll.</p>
+        <p>Hola {name},</p>
+        <p>Aquí están sus horas de esta semana. Si algo no le parece correcto,
+           por favor responda a este correo {REPLY_DEADLINE_TEXT} — de lo contrario
+           entenderemos que está confirmado y seguiremos adelante con la nómina.</p>
         <table style="border-collapse:collapse;">
             <tr style="background:#f4f4f4;">
-                <th style="padding:6px 12px;border:1px solid #ddd;text-align:left;">Date</th>
-                <th style="padding:6px 12px;border:1px solid #ddd;text-align:left;">Job/Field</th>
-                <th style="padding:6px 12px;border:1px solid #ddd;text-align:right;">Hours</th>
-                <th style="padding:6px 12px;border:1px solid #ddd;text-align:left;">Notes</th>
+                <th style="padding:6px 12px;border:1px solid #ddd;text-align:left;">Fecha</th>
+                <th style="padding:6px 12px;border:1px solid #ddd;text-align:left;">Campo</th>
+                <th style="padding:6px 12px;border:1px solid #ddd;text-align:left;">Trabajo</th>
+                <th style="padding:6px 12px;border:1px solid #ddd;text-align:right;">Horas</th>
+                <th style="padding:6px 12px;border:1px solid #ddd;text-align:left;">Notas</th>
             </tr>
             {table_rows}
             <tr style="font-weight:bold;background:#f9f9f9;">
-                <td style="padding:6px 12px;border:1px solid #ddd;" colspan="2">Total</td>
+                <td style="padding:6px 12px;border:1px solid #ddd;" colspan="3">Total</td>
                 <td style="padding:6px 12px;border:1px solid #ddd;text-align:right;">{total_hours:.2f}</td>
                 <td style="padding:6px 12px;border:1px solid #ddd;"></td>
             </tr>
         </table>
-        <p>Thanks,<br>{FROM_NAME}</p>
+        <p>Gracias,<br>{FROM_NAME}</p>
     </body>
     </html>
     """
@@ -247,7 +251,7 @@ def main():
     for (name, email), entries in grouped.items():
         html, total = build_email_html(name, entries)
         recipient = TEST_EMAIL if TEST_MODE else email
-        subject = f"Weekly Hours Confirmation - {name} ({total:.2f} hrs)"
+        subject = f"Confirmación de Horas Semanales - {name} ({total:.2f} hrs)"
         send_email(gmail_service, recipient, subject, html)
         print(f"  Sent to {recipient} for {name}: {total:.2f} hours across {len(entries)} entries")
 
