@@ -1,0 +1,44 @@
+name: Send Weekly Hours Confirmation
+
+# Manual trigger only - no schedule. Click "Run workflow" in the Actions tab
+# whenever you're ready to send (after your QA pass against the paper sheets).
+on:
+  workflow_dispatch:
+    inputs:
+      test_mode:
+        description: "Test mode (true = send everything to your own inbox only)"
+        required: true
+        type: choice
+        options:
+          - "true"
+          - "false"
+        default: "true"
+      manual_week_start:
+        description: "Optional: override week to pull (Monday date, YYYY-MM-DD). Leave blank for auto (most recently completed Mon-Sun week)."
+        required: false
+        type: string
+        default: ""
+
+jobs:
+  send-confirmations:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install smartsheet-python-sdk
+
+      - name: Run hours confirmation script
+        env:
+          SMARTSHEET_API_TOKEN: ${{ secrets.SMARTSHEET_API_TOKEN }}
+          GMAIL_ADDRESS: ${{ secrets.GMAIL_ADDRESS }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          TEST_MODE: ${{ github.event.inputs.test_mode }}
+          MANUAL_WEEK_START: ${{ github.event.inputs.manual_week_start }}
+        run: python send_hours_confirmation.py
