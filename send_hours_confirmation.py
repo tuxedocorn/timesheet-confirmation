@@ -2,35 +2,47 @@
 Weekly Hours Confirmation Emailer
 ----------------------------------
 Pulls time entries from a Smartsheet helper sheet, groups them by employee,
-builds a clean HTML table (Date / Job / Hours + weekly Total), and emails
-each employee their week's hours for confirmation before payroll.
+builds a clean HTML table (Date / Job / Hours / Notes + weekly Total), and
+emails each employee their week's hours for confirmation before payroll.
+
+Sends via the Gmail API using a service account with domain-wide delegation
+(Google Workspace no longer supports App Passwords / SMTP as of March 2025).
 
 Setup:
-    pip install smartsheet-python-sdk
+    pip install smartsheet-python-sdk google-auth google-api-python-client
 
 Required environment variables (set as secrets if running in GitHub Actions):
-    SMARTSHEET_API_TOKEN   - your Smartsheet API access token
-    GMAIL_ADDRESS           - the Workspace address sending the emails
-    GMAIL_APP_PASSWORD      - App Password generated for that Gmail account
-                              (Google Account > Security > 2-Step Verification > App Passwords)
+    SMARTSHEET_API_TOKEN        - your Smartsheet API access token
+    GMAIL_ADDRESS                - the Workspace address the emails are sent from
+    GOOGLE_SERVICE_ACCOUNT_JSON  - full contents of the service account JSON key
+                                   (Cloud Console > IAM & Admin > Service Accounts
+                                   > Keys > Add Key > JSON), authorized for domain-wide
+                                   delegation with scope gmail.send in the Workspace
+                                   Admin console (Security > API Controls > Domain-wide
+                                   Delegation)
 """
 
+import base64
+import json
 import os
-import smtplib
+import smtplib  # noqa: F401 (kept for reference; no longer used for sending)
 from collections import defaultdict
 from datetime import date, datetime, timedelta
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
 import smartsheet
+from google.oauth2 import service_account
+from googleapiclient.discovery import build
 
 # ---------------------------------------------------------------------------
 # CONFIG - edit these to match your helper sheet
 # ---------------------------------------------------------------------------
 
 SMARTSHEET_API_TOKEN = os.environ["SMARTSHEET_API_TOKEN"]
-GMAIL_ADDRESS = os.environ["GMAIL_ADDRESS"]
-GMAIL_APP_PASSWORD = os.environ["GMAIL_APP_PASSWORD"]
+GMAIL_ADDRESS = os.environ["GMAIL_ADDRESS"]  # the Workspace mailbox sending as
+GOOGLE_SERVICE_ACCOUNT_JSON = os.environ["GOOGLE_SERVICE_ACCOUNT_JSON"]
+GMAIL_SCOPES = ["https://www.googleapis.com/auth/gmail.send"]
 
 HELPER_SHEET_ID = 6881750327185284
 
@@ -195,17 +207,25 @@ def build_email_html(name, entries):
     return html, total_hours
 
 
-def send_email(to_address, subject, html_body):
+def get_gmail_service():
+    """Build an authorized Gmail API client, impersonating GMAIL_ADDRESS via
+    domain-wide delegation (must be authorized in the Workspace Admin console)."""
+    service_account_info = json.loads(GOOGLE_SERVICE_ACCOUNT_JSON)
+    credentials = service_account.Credentials.from_service_account_info(
+        service_account_info, scopes=GMAIL_SCOPES
+    ).with_subject(GMAIL_ADDRESS)
+    return build("gmail", "v1", credentials=credentials, cache_discovery=False)
+
+
+def send_email(gmail_service, to_address, subject, html_body):
     msg = MIMEMultipart("alternative")
     msg["Subject"] = subject
     msg["From"] = f"{FROM_NAME} <{GMAIL_ADDRESS}>"
     msg["To"] = to_address
     msg.attach(MIMEText(html_body, "html"))
 
-    with smtplib.SMTP("smtp.gmail.com", 587) as server:
-        server.starttls()
-        server.login(GMAIL_ADDRESS, GMAIL_APP_PASSWORD)
-        server.sendmail(GMAIL_ADDRESS, to_address, msg.as_string())
+    raw = base64.urlsafe_b64encode(msg.as_bytes()).decode("utf-8")
+    gmail_service.users().messages().send(userId="me", body={"raw": raw}).execute()
 
 
 def main():
@@ -222,11 +242,13 @@ def main():
 
     print(f"Found {len(grouped)} employee(s) to send to. TEST_MODE = {TEST_MODE}")
 
+    gmail_service = get_gmail_service()
+
     for (name, email), entries in grouped.items():
         html, total = build_email_html(name, entries)
         recipient = TEST_EMAIL if TEST_MODE else email
         subject = f"Weekly Hours Confirmation - {name} ({total:.2f} hrs)"
-        send_email(recipient, subject, html)
+        send_email(gmail_service, recipient, subject, html)
         print(f"  Sent to {recipient} for {name}: {total:.2f} hours across {len(entries)} entries")
 
 
