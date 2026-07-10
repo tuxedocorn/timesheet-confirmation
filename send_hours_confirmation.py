@@ -48,12 +48,17 @@ COL_NOTES = "Notes"
 #
 # To manually pull a specific week instead (e.g. re-sending after a correction),
 # set this to that week's Monday date as "YYYY-MM-DD". Leave as None for auto.
-MANUAL_WEEK_START = None  # e.g. "2026-06-29"
+# Can also be set via the MANUAL_WEEK_START env var (used by the GitHub Actions
+# workflow_dispatch input) - env var takes precedence if present.
+MANUAL_WEEK_START = os.environ.get("MANUAL_WEEK_START") or None
 
 # TEST_MODE = True routes every email to TEST_EMAIL regardless of whose data
 # it is, so you can check formatting safely. Flip to False to go live.
-TEST_MODE = True
-TEST_EMAIL = "you@tuxedocorn.com"  # TODO: replace with your own address
+# Can also be set via the TEST_MODE env var ("true"/"false") - used by the
+# GitHub Actions workflow_dispatch input so you can choose per-run without
+# editing this file. Defaults to True (safe) if not set.
+TEST_MODE = os.environ.get("TEST_MODE", "true").strip().lower() == "true"
+TEST_EMAIL = "erik@tuxedofarmco.com"  # TODO: replace with your own address
 
 FROM_NAME = "Tuxedo Farm Co."
 REPLY_DEADLINE_TEXT = "by tomorrow"  # shown in the email body
