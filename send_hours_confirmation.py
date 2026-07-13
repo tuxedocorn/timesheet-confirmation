@@ -25,6 +25,7 @@ Required environment variables (set as secrets if running in GitHub Actions):
 import base64
 import json
 import os
+import re
 import smtplib  # noqa: F401 (kept for reference; no longer used for sending)
 from collections import defaultdict
 from datetime import date, datetime, timedelta
@@ -71,7 +72,7 @@ MANUAL_WEEK_START = os.environ.get("MANUAL_WEEK_START") or None
 # GitHub Actions workflow_dispatch input so you can choose per-run without
 # editing this file. Defaults to True (safe) if not set.
 TEST_MODE = os.environ.get("TEST_MODE", "true").strip().lower() == "true"
-TEST_EMAIL = "erik@tuxedofarmco.com"  # TODO: replace with your own address
+TEST_EMAIL = "you@tuxedocorn.com"  # TODO: replace with your own address
 
 FROM_NAME = "Tuxedo Farm Co."
 REPLY_DEADLINE_TEXT = "antes de mañana"  # shown in the email body
@@ -137,21 +138,40 @@ def get_sheet_rows():
     return rows_data
 
 
+EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+
+def is_valid_email(address):
+    return bool(address) and bool(EMAIL_PATTERN.match(address.strip()))
+
+
 def group_by_employee(rows, week_start, week_end):
     """Group rows into {(name, email): [row, row, ...]}, keeping only rows whose
-    Date falls within [week_start, week_end] inclusive."""
+    Date falls within [week_start, week_end] inclusive.
+
+    Names/emails are stripped of surrounding whitespace and emails are
+    lowercased before being used as the grouping key, so the same person
+    doesn't get split into multiple "employees" due to formula/whitespace
+    inconsistencies on the sheet.
+    """
     grouped = defaultdict(list)
+    skipped_missing = []
     for row in rows:
         row_date = parse_row_date(row.get(COL_DATE))
         if row_date is None or not (week_start <= row_date <= week_end):
             continue
 
-        name = row.get(COL_EMPLOYEE_NAME)
-        email = row.get(COL_EMPLOYEE_EMAIL)
+        name = (row.get(COL_EMPLOYEE_NAME) or "").strip()
+        email = (row.get(COL_EMPLOYEE_EMAIL) or "").strip().lower()
         if not name or not email:
+            skipped_missing.append(row)
             continue  # skip incomplete rows rather than guessing
 
         grouped[(name, email)].append(row)
+
+    if skipped_missing:
+        print(f"NOTE: skipped {len(skipped_missing)} row(s) with missing Name or Email.")
+
     return grouped
 
 
@@ -248,12 +268,34 @@ def main():
 
     gmail_service = get_gmail_service()
 
+    sent_count = 0
+    problems = []  # (name, recipient, reason)
+
     for (name, email), entries in grouped.items():
         html, total = build_email_html(name, entries)
+
+        if not is_valid_email(email):
+            print(f"  SKIPPED {name} - invalid email address on sheet: '{email}'")
+            problems.append((name, email, "invalid email format"))
+            continue
+
         recipient = TEST_EMAIL if TEST_MODE else email
         subject = f"Confirmación de Horas Semanales - {name} ({total:.2f} hrs)"
-        send_email(gmail_service, recipient, subject, html)
-        print(f"  Sent to {recipient} for {name}: {total:.2f} hours across {len(entries)} entries")
+        try:
+            send_email(gmail_service, recipient, subject, html)
+            sent_count += 1
+            print(f"  Sent to {recipient} for {name}: {total:.2f} hours across {len(entries)} entries")
+        except Exception as exc:  # noqa: BLE001 - deliberately broad so one bad
+            # row never crashes the whole batch; every other employee should
+            # still get their email even if one recipient fails.
+            print(f"  FAILED to send to {recipient} for {name}: {exc}")
+            problems.append((name, recipient, str(exc)))
+
+    print(f"\nDone. Sent: {sent_count}/{len(grouped)}. Problems: {len(problems)}.")
+    if problems:
+        print("Follow up on these before trusting payroll for them:")
+        for name, recipient, reason in problems:
+            print(f"  - {name} ({recipient!r}): {reason}")
 
 
 if __name__ == "__main__":
