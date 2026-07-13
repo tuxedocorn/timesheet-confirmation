@@ -72,7 +72,7 @@ MANUAL_WEEK_START = os.environ.get("MANUAL_WEEK_START") or None
 # GitHub Actions workflow_dispatch input so you can choose per-run without
 # editing this file. Defaults to True (safe) if not set.
 TEST_MODE = os.environ.get("TEST_MODE", "true").strip().lower() == "true"
-TEST_EMAIL = "you@tuxedocorn.com"  # TODO: replace with your own address
+TEST_EMAIL = "erik@tuxedofarmco.com"  # TODO: replace with your own address
 
 FROM_NAME = "Tuxedo Farm Co."
 REPLY_DEADLINE_TEXT = "antes de mañana"  # shown in the email body
