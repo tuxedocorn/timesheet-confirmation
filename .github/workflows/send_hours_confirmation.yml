@@ -12,7 +12,7 @@ on:
         options:
           - "true"
           - "false"
-        default: "true"
+        default: "false"
       manual_week_start:
         description: "Optional: override week to pull (Monday date, YYYY-MM-DD). Leave blank for auto (most recently completed Mon-Sun week)."
         required: false
