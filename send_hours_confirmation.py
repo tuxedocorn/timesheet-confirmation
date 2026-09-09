@@ -56,6 +56,11 @@ COL_PAYROLL_ITEM = "Payroll Item"
 COL_HOURS = "Hours"
 COL_NOTES = "Notes"
 
+# Payroll Item value(s) that represent piece-rate quantity rather than actual
+# hours worked (e.g. "Sacks"). These get broken into a separate section below
+# the main hours table instead of being counted in the Hours total.
+PIECE_RATE_PAYROLL_ITEMS = {"sacks"}  # lowercase, matched case-insensitively
+
 # Pay week runs Monday - Sunday. By default the script auto-calculates the
 # most recently COMPLETED pay week based on today's date, so triggering it on
 # a Monday or Tuesday still correctly pulls last week (not the in-progress one).
@@ -72,7 +77,7 @@ MANUAL_WEEK_START = os.environ.get("MANUAL_WEEK_START") or None
 # GitHub Actions workflow_dispatch input so you can choose per-run without
 # editing this file. Defaults to True (safe) if not set.
 TEST_MODE = os.environ.get("TEST_MODE", "true").strip().lower() == "true"
-TEST_EMAIL = "erik@tuxedofarmco.com"  # TODO: replace with your own address
+TEST_EMAIL = "you@tuxedocorn.com"  # TODO: replace with your own address
 
 FROM_NAME = "Tuxedo Farm Co."
 REPLY_DEADLINE_TEXT = "antes de mañana"  # shown in the email body
@@ -153,9 +158,15 @@ def group_by_employee(rows, week_start, week_end):
     lowercased before being used as the grouping key, so the same person
     doesn't get split into multiple "employees" due to formula/whitespace
     inconsistencies on the sheet.
+
+    Returns (grouped, missing_email_names) where missing_email_names is a
+    sorted list of the distinct employee names that had at least one row
+    with a blank email, so they can be reported by name rather than just a count.
     """
     grouped = defaultdict(list)
-    skipped_missing = []
+    missing_email_names = set()
+    blank_row_count = 0
+
     for row in rows:
         row_date = parse_row_date(row.get(COL_DATE))
         if row_date is None or not (week_start <= row_date <= week_end):
@@ -163,44 +174,95 @@ def group_by_employee(rows, week_start, week_end):
 
         name = (row.get(COL_EMPLOYEE_NAME) or "").strip()
         email = (row.get(COL_EMPLOYEE_EMAIL) or "").strip().lower()
-        if not name or not email:
-            skipped_missing.append(row)
-            continue  # skip incomplete rows rather than guessing
+
+        if not name and not email:
+            blank_row_count += 1
+            continue  # fully blank row, not a real employee entry
+        if name and not email:
+            missing_email_names.add(name)
+            continue
+        if not name:
+            continue  # has an email but no name - can't attribute it, skip
 
         grouped[(name, email)].append(row)
 
-    if skipped_missing:
-        print(f"NOTE: skipped {len(skipped_missing)} row(s) with missing Name or Email.")
+    if blank_row_count:
+        print(f"NOTE: skipped {blank_row_count} fully blank row(s) (no name or email).")
+    if missing_email_names:
+        print(f"NOTE: {len(missing_email_names)} employee(s) have rows this week but no email on file:")
+        for n in sorted(missing_email_names):
+            print(f"    - {n}")
 
-    return grouped
+    return grouped, sorted(missing_email_names)
 
 
 def build_email_html(name, entries):
-    """Build the HTML table + total for one employee's rows. Returns (html, total_hours)."""
+    """Build the HTML table + total for one employee's rows. Returns (html, total_hours).
+
+    Entries whose Payroll Item is in PIECE_RATE_PAYROLL_ITEMS (e.g. "Sacks")
+    are broken out into a separate section below the main hours table, since
+    their quantity is a piece-rate count, not actual hours worked, and
+    shouldn't be added into the Hours total.
+    """
     entries_sorted = sorted(entries, key=lambda r: str(r.get(COL_DATE) or ""))
 
-    total_hours = 0.0
-    table_rows = ""
+    hourly_entries = []
+    piece_rate_entries = []
     for entry in entries_sorted:
-        entry_date = entry.get(COL_DATE, "") or ""
-        job = entry.get(COL_JOB, "") or ""
-        payroll_item = entry.get(COL_PAYROLL_ITEM, "") or ""
-        notes = entry.get(COL_NOTES, "") or ""
-        raw_hours = entry.get(COL_HOURS, 0)
-        try:
-            hours = float(raw_hours)
-        except (TypeError, ValueError):
-            hours = 0.0
-        total_hours += hours
+        payroll_item = str(entry.get(COL_PAYROLL_ITEM, "") or "").strip().lower()
+        if payroll_item in PIECE_RATE_PAYROLL_ITEMS:
+            piece_rate_entries.append(entry)
+        else:
+            hourly_entries.append(entry)
 
-        table_rows += f"""
-        <tr>
-            <td style="padding:6px 12px;border:1px solid #ddd;">{entry_date}</td>
-            <td style="padding:6px 12px;border:1px solid #ddd;">{job}</td>
-            <td style="padding:6px 12px;border:1px solid #ddd;">{payroll_item}</td>
-            <td style="padding:6px 12px;border:1px solid #ddd;text-align:right;">{hours:.2f}</td>
-            <td style="padding:6px 12px;border:1px solid #ddd;">{notes}</td>
-        </tr>"""
+    def build_rows(rows, quantity_label_is_hours=True):
+        total = 0.0
+        html_rows = ""
+        for entry in rows:
+            entry_date = entry.get(COL_DATE, "") or ""
+            job = entry.get(COL_JOB, "") or ""
+            payroll_item = entry.get(COL_PAYROLL_ITEM, "") or ""
+            notes = entry.get(COL_NOTES, "") or ""
+            raw_qty = entry.get(COL_HOURS, 0)
+            try:
+                qty = float(raw_qty)
+            except (TypeError, ValueError):
+                qty = 0.0
+            total += qty
+
+            html_rows += f"""
+            <tr>
+                <td style="padding:6px 12px;border:1px solid #ddd;">{entry_date}</td>
+                <td style="padding:6px 12px;border:1px solid #ddd;">{job}</td>
+                <td style="padding:6px 12px;border:1px solid #ddd;">{payroll_item}</td>
+                <td style="padding:6px 12px;border:1px solid #ddd;text-align:right;">{qty:.2f}</td>
+                <td style="padding:6px 12px;border:1px solid #ddd;">{notes}</td>
+            </tr>"""
+        return html_rows, total
+
+    hourly_rows_html, total_hours = build_rows(hourly_entries)
+
+    piece_rate_section = ""
+    if piece_rate_entries:
+        piece_rows_html, total_pieces = build_rows(piece_rate_entries)
+        piece_rate_section = f"""
+        <p style="margin-top:20px;"><b>Costales (tarifa por pieza)</b></p>
+        <table style="border-collapse:collapse;">
+            <tr style="background:#f4f4f4;">
+                <th style="padding:6px 12px;border:1px solid #ddd;text-align:left;">Fecha</th>
+                <th style="padding:6px 12px;border:1px solid #ddd;text-align:left;">Campo</th>
+                <th style="padding:6px 12px;border:1px solid #ddd;text-align:left;">Trabajo</th>
+                <th style="padding:6px 12px;border:1px solid #ddd;text-align:right;">Cantidad</th>
+                <th style="padding:6px 12px;border:1px solid #ddd;text-align:left;">Notas</th>
+            </tr>
+            {piece_rows_html}
+            <tr style="font-weight:bold;background:#f9f9f9;">
+                <td style="padding:6px 12px;border:1px solid #ddd;" colspan="3">Total Costales</td>
+                <td style="padding:6px 12px;border:1px solid #ddd;text-align:right;">{total_pieces:.2f}</td>
+                <td style="padding:6px 12px;border:1px solid #ddd;"></td>
+            </tr>
+        </table>
+        """
 
     html = f"""
     <html>
@@ -217,13 +279,14 @@ def build_email_html(name, entries):
                 <th style="padding:6px 12px;border:1px solid #ddd;text-align:right;">Horas</th>
                 <th style="padding:6px 12px;border:1px solid #ddd;text-align:left;">Notas</th>
             </tr>
-            {table_rows}
+            {hourly_rows_html}
             <tr style="font-weight:bold;background:#f9f9f9;">
                 <td style="padding:6px 12px;border:1px solid #ddd;" colspan="3">Total</td>
                 <td style="padding:6px 12px;border:1px solid #ddd;text-align:right;">{total_hours:.2f}</td>
                 <td style="padding:6px 12px;border:1px solid #ddd;"></td>
             </tr>
         </table>
+        {piece_rate_section}
         <p>Gracias,<br>{FROM_NAME}</p>
     </body>
     </html>
@@ -257,7 +320,7 @@ def main():
     print(f"Pulling pay week: {week_start.isoformat()} to {week_end.isoformat()}")
 
     rows = get_sheet_rows()
-    grouped = group_by_employee(rows, week_start, week_end)
+    grouped, missing_email_names = group_by_employee(rows, week_start, week_end)
 
     if not grouped:
         print("No matching rows found for that week — check the date range above "
@@ -276,6 +339,10 @@ def main():
 
         if not is_valid_email(email):
             print(f"  SKIPPED {name} - invalid email address on sheet: '{email}'")
+            print(f"    -> {len(entries)} row(s) affected, look for these on the sheet to find who this is:")
+            for entry in sorted(entries, key=lambda r: str(r.get(COL_DATE) or "")):
+                print(f"       Date={entry.get(COL_DATE)}  Job={entry.get(COL_JOB)}  "
+                      f"Hours={entry.get(COL_HOURS)}  Notes={entry.get(COL_NOTES)}")
             problems.append((name, email, "invalid email format"))
             continue
 
@@ -296,6 +363,8 @@ def main():
         print("Follow up on these before trusting payroll for them:")
         for name, recipient, reason in problems:
             print(f"  - {name} ({recipient!r}): {reason}")
+    if missing_email_names:
+        print(f"Also missing an email entirely (not counted above, add their address and re-run): {', '.join(missing_email_names)}")
 
 
 if __name__ == "__main__":
