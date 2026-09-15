@@ -56,10 +56,14 @@ COL_PAYROLL_ITEM = "Payroll Item"
 COL_HOURS = "Hours"
 COL_NOTES = "Notes"
 
-# Payroll Item value(s) that represent piece-rate quantity rather than actual
-# hours worked (e.g. "Sacks"). These get broken into a separate section below
-# the main hours table instead of being counted in the Hours total.
-PIECE_RATE_PAYROLL_ITEMS = {"sacks"}  # lowercase, matched case-insensitively
+# Payroll Item values that represent piece-rate quantity rather than actual
+# hours worked. Each gets its own labeled section below the main Hours table
+# instead of being counted in the Hours total. Keys are matched
+# case-insensitively; values are the section heading shown in the email.
+PIECE_RATE_SECTIONS = {
+    "sacks": "Costales (tarifa por pieza)",
+    "onion topping": "Deshije de Cebolla (tarifa por pieza)",
+}
 
 # Pay week runs Monday - Sunday. By default the script auto-calculates the
 # most recently COMPLETED pay week based on today's date, so triggering it on
@@ -199,23 +203,24 @@ def group_by_employee(rows, week_start, week_end):
 def build_email_html(name, entries):
     """Build the HTML table + total for one employee's rows. Returns (html, total_hours).
 
-    Entries whose Payroll Item is in PIECE_RATE_PAYROLL_ITEMS (e.g. "Sacks")
-    are broken out into a separate section below the main hours table, since
-    their quantity is a piece-rate count, not actual hours worked, and
-    shouldn't be added into the Hours total.
+    Entries whose Payroll Item matches a key in PIECE_RATE_SECTIONS (e.g.
+    "Sacks", "Onion Topping") are broken out into their own labeled section
+    below the main hours table, since their quantity is a piece-rate count,
+    not actual hours worked, and shouldn't be added into the Hours total.
     """
     entries_sorted = sorted(entries, key=lambda r: str(r.get(COL_DATE) or ""))
 
     hourly_entries = []
-    piece_rate_entries = []
+    piece_rate_buckets = defaultdict(list)  # section title -> entries
     for entry in entries_sorted:
         payroll_item = str(entry.get(COL_PAYROLL_ITEM, "") or "").strip().lower()
-        if payroll_item in PIECE_RATE_PAYROLL_ITEMS:
-            piece_rate_entries.append(entry)
+        section_title = PIECE_RATE_SECTIONS.get(payroll_item)
+        if section_title:
+            piece_rate_buckets[section_title].append(entry)
         else:
             hourly_entries.append(entry)
 
-    def build_rows(rows, quantity_label_is_hours=True):
+    def build_rows(rows):
         total = 0.0
         html_rows = ""
         for entry in rows:
@@ -242,11 +247,18 @@ def build_email_html(name, entries):
 
     hourly_rows_html, total_hours = build_rows(hourly_entries)
 
-    piece_rate_section = ""
-    if piece_rate_entries:
-        piece_rows_html, total_pieces = build_rows(piece_rate_entries)
-        piece_rate_section = f"""
-        <p style="margin-top:20px;"><b>Costales (tarifa por pieza)</b></p>
+    # Render each piece-rate section that has entries this week, in the same
+    # order they're defined in PIECE_RATE_SECTIONS (not dict-insertion order,
+    # so the layout stays consistent week to week regardless of which
+    # sections happen to have data).
+    piece_rate_sections_html = ""
+    for section_title in PIECE_RATE_SECTIONS.values():
+        rows = piece_rate_buckets.get(section_title)
+        if not rows:
+            continue
+        piece_rows_html, total_pieces = build_rows(rows)
+        piece_rate_sections_html += f"""
+        <p style="margin-top:20px;"><b>{section_title}</b></p>
         <table style="border-collapse:collapse;">
             <tr style="background:#f4f4f4;">
                 <th style="padding:6px 12px;border:1px solid #ddd;text-align:left;">Fecha</th>
@@ -257,7 +269,7 @@ def build_email_html(name, entries):
             </tr>
             {piece_rows_html}
             <tr style="font-weight:bold;background:#f9f9f9;">
-                <td style="padding:6px 12px;border:1px solid #ddd;" colspan="3">Total Costales</td>
+                <td style="padding:6px 12px;border:1px solid #ddd;" colspan="3">Total</td>
                 <td style="padding:6px 12px;border:1px solid #ddd;text-align:right;">{total_pieces:.2f}</td>
                 <td style="padding:6px 12px;border:1px solid #ddd;"></td>
             </tr>
@@ -286,7 +298,7 @@ def build_email_html(name, entries):
                 <td style="padding:6px 12px;border:1px solid #ddd;"></td>
             </tr>
         </table>
-        {piece_rate_section}
+        {piece_rate_sections_html}
         <p>Gracias,<br>{FROM_NAME}</p>
     </body>
     </html>
