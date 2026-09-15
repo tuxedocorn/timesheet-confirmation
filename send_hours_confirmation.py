@@ -62,7 +62,7 @@ COL_NOTES = "Notes"
 # case-insensitively; values are the section heading shown in the email.
 PIECE_RATE_SECTIONS = {
     "sacks": "Costales (tarifa por pieza)",
-    "onion topping": "Deshije de Cebolla (tarifa por pieza)",
+    "onion topping.": "Deshije de Cebolla (tarifa por pieza)",
 }
 
 # Pay week runs Monday - Sunday. By default the script auto-calculates the
